@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Globe, PlusCircle, Home, Folder, Gift, Settings, ChevronDown, Paperclip, ArrowUp, Search, MoreHorizontal, Clock, BookOpen, FileText, Upload, Download, Plus, RotateCcw, Minus, X, Maximize2, ArrowDown, BarChart2, ArrowRight, Sparkles, Calendar, Star, Share2, CheckSquare, FolderPlus, Briefcase, GraduationCap, Dices, Layers, Check } from 'lucide-react';
+import { Globe, PlusCircle, Home, Folder, Gift, Settings, ChevronDown, Paperclip, ArrowUp, Search, MoreHorizontal, Clock, BookOpen, FileText, Upload, Download, Plus, RotateCcw, Minus, X, Maximize2, ArrowDown, BarChart2, ArrowRight, Sparkles, Calendar, Star, Share2, CheckSquare, FolderPlus, Briefcase, GraduationCap, Layers, Check } from 'lucide-react';
 
 const Logo = () => (
   <div className="flex items-center">
@@ -22,12 +22,12 @@ const LogoSmall = () => (
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<'home' | 'all_projects' | 'project_workspace'>('home');
-  const [selectedAction, setSelectedAction] = useState('Literature survey');
+  const [selectedAction, setSelectedAction] = useState('Research Reports');
   const [surveyPrompt, setSurveyPrompt] = useState('');
   const [isOutputSettingsOpen, setIsOutputSettingsOpen] = useState(false);
-  const [outputFormat, setOutputFormat] = useState('Auto');
-  const [outputLength, setOutputLength] = useState('Auto');
-  const [outputLanguage, setOutputLanguage] = useState('Auto');
+  const [isReportSettingsModalOpen, setIsReportSettingsModalOpen] = useState(false);
+  const [reportType, setReportType] = useState('');
+  const [reportLength, setReportLength] = useState('');
   const [isWriterDropdownOpen, setIsWriterDropdownOpen] = useState(false);
   const [isSearchScopeDropdownOpen, setIsSearchScopeDropdownOpen] = useState(false);
   const [searchScope, setSearchScope] = useState<'web' | 'paper'>('web');
@@ -43,63 +43,76 @@ export default function App() {
   const [workspaceHeight, setWorkspaceHeight] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const outputSettingsRef = useRef<HTMLDivElement>(null);
 
-  const PROMPT_TEMPLATES: Record<string, { prompt: string, length: string, language: string }> = {
-    'Academic Paper': {
-      prompt: "Write a comprehensive academic literature review on [Topic]. Include recent advancements, key methodologies, and future research directions. Format with standard academic citations.",
-      length: 'Detailed (10+ pages)',
-      language: 'English'
+  const reportTypeOptions = [
+    {
+      value: 'Academic Survey',
+      label: 'Academic Survey',
+      description: 'Academic papers, methods, and research trends'
     },
-    'Industry Report': {
-      prompt: "Draft a concise industry brief on [Topic]. Focus on market trends, practical applications, and business impact. Keep it accessible for non-technical stakeholders.",
-      length: 'Standard (3-5 pages)',
-      language: 'English'
+    {
+      value: 'Industry Report',
+      label: 'Industry Report',
+      description: 'Web and industry sources, markets, players, and signals'
+    }
+  ];
+
+  const reportLengthOptions = [
+    {
+      value: 'Short version',
+      label: 'Short version',
+      detail: '3-5 minutes',
+      description: 'Quick paper-based summary'
     },
-    'Executive Summary': {
-      prompt: "Create a high-level executive summary for [Topic]. Highlight the core problem, proposed solution, key metrics, and strategic recommendations.",
-      length: 'Brief (1-2 pages)',
-      language: 'English'
-    },
-    'Blog Post': {
-      prompt: "Write an engaging blog post about [Topic]. Use a conversational tone, clear headings, and compelling examples to draw the reader in.",
-      length: 'Standard (3-5 pages)',
-      language: 'English'
-    },
-    'Auto': {
-      prompt: "Analyze the attached document to learn its writing style and structure. Then, write a new report on [Topic] following the exact same format and tone.",
-      length: 'Auto',
-      language: 'Auto'
+    {
+      value: 'Standard version',
+      label: 'Standard version',
+      detail: '1-2 hours',
+      description: 'Broader paper-based survey'
+    }
+  ];
+
+  const selectedReportType = reportTypeOptions.find((option) => option.value === reportType);
+  const selectedReportLength = reportLengthOptions.find((option) => option.value === reportLength);
+  const isAcademicSurvey = reportType === 'Academic Survey';
+  const isIndustryReport = reportType === 'Industry Report';
+  const canAttemptSurvey = surveyPrompt.trim() !== '';
+  const isReportSettingsComplete = reportType !== '' && (isIndustryReport || reportLength !== '');
+  const canSubmitSurvey = isReportSettingsComplete && surveyPrompt.trim() !== '';
+  const surveySubmitHint = surveyPrompt.trim() === ''
+    ? 'Describe your topic to generate the report'
+    : !isReportSettingsComplete
+      ? 'Choose report settings to continue'
+      : 'Generate report';
+  const surveyPlaceholder = !reportType
+    ? 'Describe your topic, goals, or key questions here, then choose the output type...'
+    : reportType === 'Academic Survey'
+      ? 'Describe the research topic, key questions, representative papers, methods, or frontier directions you want reviewed. This mode uses academic papers and scholarly sources...'
+      : 'Describe the industry topic, target market, leading players, use cases, investment signals, or business risks you want analyzed. This mode uses web and industry sources...';
+
+  const handleSurveySubmit = () => {
+    if (!canAttemptSurvey) return;
+    if (!isReportSettingsComplete) {
+      setIsOutputSettingsOpen(false);
+      setIsReportSettingsModalOpen(true);
+      return;
     }
   };
 
-  const handleSurpriseClick = () => {
-    const formats = Object.keys(PROMPT_TEMPLATES);
-    let randomFormat = formats[Math.floor(Math.random() * formats.length)];
-    
-    // Ensure we pick a different one if possible
-    if (formats.length > 1 && PROMPT_TEMPLATES[randomFormat].prompt === surveyPrompt) {
-      randomFormat = formats[(formats.indexOf(randomFormat) + 1) % formats.length];
-    }
-    
-    const template = PROMPT_TEMPLATES[randomFormat];
-    setSurveyPrompt(template.prompt);
-    setOutputFormat(randomFormat);
-    setOutputLength(template.length);
-    setOutputLanguage(template.language);
+  const handleCloseReportSettingsModal = () => {
+    setIsReportSettingsModalOpen(false);
   };
 
-  const handleFormatChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newFormat = e.target.value;
-    setOutputFormat(newFormat);
+  const handleConfirmReportSettings = () => {
+    if (!isReportSettingsComplete) return;
+    setIsReportSettingsModalOpen(false);
+  };
 
-    // If the current prompt is empty or exactly matches one of our templates, auto-update it
-    const isCurrentPromptATemplate = Object.values(PROMPT_TEMPLATES).some(t => t.prompt === surveyPrompt);
-    if (isCurrentPromptATemplate || surveyPrompt.trim() === '') {
-      if (PROMPT_TEMPLATES[newFormat]) {
-        setSurveyPrompt(PROMPT_TEMPLATES[newFormat].prompt);
-        setOutputLength(PROMPT_TEMPLATES[newFormat].length);
-        setOutputLanguage(PROMPT_TEMPLATES[newFormat].language);
-      }
+  const handleReportTypeSelect = (value: string) => {
+    setReportType(value);
+    if (value === 'Industry Report') {
+      setReportLength('');
     }
   };
 
@@ -121,6 +134,20 @@ export default function App() {
       document.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isDragging]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (!isOutputSettingsOpen || !outputSettingsRef.current) return;
+      if (!outputSettingsRef.current.contains(e.target as Node)) {
+        setIsOutputSettingsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOutputSettingsOpen]);
 
   const projects = [
     { id: 1, type: 'latex', title: '1', time: '2 hours ago' },
@@ -926,53 +953,46 @@ export default function App() {
 
               {/* Composer Card */}
               <div className="mt-12 w-full max-w-[800px] min-h-[240px] rounded-2xl bg-white/90 border border-white shadow-[0_8px_30px_rgb(0,0,0,0.06)] backdrop-blur-xl p-8 flex flex-col transition-all">
-                {selectedAction === 'Literature survey' ? (
+                {selectedAction === 'Research Reports' ? (
                   <>
-                    <h2 className="text-[17px] font-semibold text-[#8b5cf6] mb-4 flex items-center gap-2">
-                      <BookOpen size={18} />
-                      Literature survey & Reports
+                    <h2 className="text-[17px] font-semibold text-[#8b5cf6] mb-4">
+                      Research Reports
                     </h2>
                     
                     <div className="flex-1 flex flex-col">
                       <textarea 
                         value={surveyPrompt}
                         onChange={(e) => setSurveyPrompt(e.target.value)}
-                        placeholder="What kind of report do you need? You can ask for an Academic Survey, Industry Report, Learn from Template, or any other style you want to write..."
+                        placeholder={surveyPlaceholder}
                         className="w-full flex-1 bg-transparent border-none outline-none text-[15px] text-gray-800 placeholder:text-gray-400 resize-none min-h-[80px]"
                       />
                     </div>
 
                     <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between">
                       <div className="flex items-center gap-4 text-sm text-gray-600 relative">
-                        <button 
-                          onClick={handleSurpriseClick}
-                          className="flex items-center gap-1.5 hover:text-gray-900 transition-colors text-gray-600 font-medium text-sm px-2 py-1 rounded-md hover:bg-gray-100"
-                          title="Get a random prompt template"
-                        >
-                          <Dices size={16} /> Surprise Me
-                        </button>
-                        <button className="flex items-center gap-1.5 hover:text-gray-900 transition-colors text-gray-600 font-medium text-sm px-2 py-1 rounded-md hover:bg-gray-100">
-                          <Paperclip size={16} /> Add reference files or templates
-                        </button>
-                        <div className="relative">
+                        <div className="relative" ref={outputSettingsRef}>
                           <button 
                             onClick={() => setIsOutputSettingsOpen(!isOutputSettingsOpen)}
-                            className={`flex items-center gap-1.5 transition-colors font-medium text-sm px-2 py-1 rounded-md ${isOutputSettingsOpen || outputFormat !== 'Auto' || outputLength !== 'Auto' || outputLanguage !== 'Auto' ? 'bg-purple-50 text-purple-700' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'}`}
+                            className="flex items-center gap-1.5 hover:text-gray-900 transition-colors"
                           >
-                            <Settings size={16} /> 
-                            {outputFormat !== 'Auto' || outputLength !== 'Auto' || outputLanguage !== 'Auto' ? 'Settings Applied' : 'Output Settings'}
+                            <Settings size={14} className="text-gray-400" /> 
+                            {isReportSettingsComplete
+                              ? (isAcademicSurvey ? `${reportType} · ${selectedReportLength?.label}` : reportType)
+                              : 'Type'}
                           </button>
                           
                           {/* Settings Popover */}
                           {isOutputSettingsOpen && (
-                            <div className="absolute bottom-full left-0 mb-2 w-64 bg-white rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.1)] border border-gray-100 p-4 z-50">
-                              <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-[13px] font-semibold text-gray-800">Output Preferences</h3>
+                            <div className="absolute bottom-full left-0 mb-2 w-[420px] max-w-[calc(100vw-64px)] bg-white rounded-2xl shadow-[0_12px_36px_rgb(0,0,0,0.12)] border border-gray-100 p-4 z-50">
+                              <div className="flex items-center justify-between mb-2.5">
+                                <div>
+                                  <h3 className="text-[13px] font-semibold text-gray-800">Report Settings</h3>
+                                  <p className="text-[11px] text-gray-500 mt-0.5">Choose report type and output scope</p>
+                                </div>
                                 <button 
                                   onClick={() => {
-                                    setOutputFormat('Auto');
-                                    setOutputLength('Auto');
-                                    setOutputLanguage('Auto');
+                                    setReportType('');
+                                    setReportLength('');
                                   }}
                                   className="text-[11px] text-gray-400 hover:text-gray-600 underline"
                                 >
@@ -981,54 +1001,123 @@ export default function App() {
                               </div>
                               <div className="space-y-3">
                                 <div>
-                                  <label className="text-xs font-medium text-gray-700 mb-1.5 block">Format</label>
-                                  <select 
-                                    value={outputFormat}
-                                    onChange={handleFormatChange}
-                                    className="w-full text-[13px] border border-gray-200 rounded-md p-1.5 bg-gray-50 outline-none text-gray-700 focus:border-purple-300 focus:ring-1 focus:ring-purple-300 transition-all"
-                                  >
-                                    <option value="Auto">Auto</option>
-                                    <option value="Academic Paper">Academic Paper</option>
-                                    <option value="Industry Report">Industry Report</option>
-                                    <option value="Executive Summary">Executive Summary</option>
-                                    <option value="Blog Post">Blog Post</option>
-                                  </select>
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="w-5 h-5 rounded-full bg-[#f3e8ff] text-[#7e22ce] text-[11px] font-semibold flex items-center justify-center">1</span>
+                                    <label className="text-xs font-medium text-gray-700">Choose report type</label>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {reportTypeOptions.map((option) => {
+                                      const isSelected = reportType === option.value;
+                                      return (
+                                        <button
+                                          key={option.value}
+                                          onClick={() => handleReportTypeSelect(option.value)}
+                                          className={`w-full text-left rounded-xl border p-3 transition-all ${
+                                            isSelected
+                                              ? 'border-[#d8b4fe] bg-[#f5f3ff] shadow-[0_4px_12px_rgba(139,92,246,0.10)]'
+                                              : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+                                          }`}
+                                        >
+                                          <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                              <div className={`text-[13px] font-semibold ${isSelected ? 'text-[#6b21a8]' : 'text-gray-800'}`}>
+                                                {option.label}
+                                              </div>
+                                              <div className={`mt-1 text-[11px] leading-4 ${isSelected ? 'text-[#7e22ce]' : 'text-gray-500'}`}>
+                                                {option.description}
+                                              </div>
+                                            </div>
+                                            <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-[#8b5cf6] bg-[#8b5cf6] text-white' : 'border-gray-300 bg-white text-transparent'}`}>
+                                              <Check size={12} strokeWidth={3} />
+                                            </div>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
                                 </div>
-                                <div>
-                                  <label className="text-xs font-medium text-gray-700 mb-1.5 block">Length</label>
-                                  <select 
-                                    value={outputLength}
-                                    onChange={(e) => setOutputLength(e.target.value)}
-                                    className="w-full text-[13px] border border-gray-200 rounded-md p-1.5 bg-gray-50 outline-none text-gray-700 focus:border-purple-300 focus:ring-1 focus:ring-purple-300 transition-all"
-                                  >
-                                    <option value="Auto">Auto</option>
-                                    <option value="Detailed (10+ pages)">Detailed (10+ pages)</option>
-                                    <option value="Standard (3-5 pages)">Standard (3-5 pages)</option>
-                                    <option value="Brief (1-2 pages)">Brief (1-2 pages)</option>
-                                  </select>
-                                </div>
-                                <div>
-                                  <label className="text-xs font-medium text-gray-700 mb-1.5 block">Language</label>
-                                  <select 
-                                    value={outputLanguage}
-                                    onChange={(e) => setOutputLanguage(e.target.value)}
-                                    className="w-full text-[13px] border border-gray-200 rounded-md p-1.5 bg-gray-50 outline-none text-gray-700 focus:border-purple-300 focus:ring-1 focus:ring-purple-300 transition-all"
-                                  >
-                                    <option value="Auto">Auto</option>
-                                    <option value="English">English</option>
-                                    <option value="Chinese">Chinese</option>
-                                    <option value="Spanish">Spanish</option>
-                                    <option value="French">French</option>
-                                    <option value="German">German</option>
-                                  </select>
-                                </div>
+                                {isAcademicSurvey && (
+                                  <div>
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="w-5 h-5 rounded-full bg-[#f3e8ff] text-[#7e22ce] text-[11px] font-semibold flex items-center justify-center">2</span>
+                                      <label className="text-xs font-medium text-gray-700">Choose survey depth</label>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {reportLengthOptions.map((option) => {
+                                        const isSelected = reportLength === option.value;
+                                        return (
+                                          <button
+                                            key={option.value}
+                                            onClick={() => setReportLength(option.value)}
+                                            className={`w-full text-left rounded-xl border p-3 transition-all ${
+                                              isSelected
+                                                ? 'border-[#d8b4fe] bg-[#f5f3ff] shadow-[0_4px_12px_rgba(139,92,246,0.10)]'
+                                                : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+                                            }`}
+                                          >
+                                            <div className="flex items-start justify-between gap-2">
+                                              <div>
+                                                <div className={`text-[13px] font-semibold ${isSelected ? 'text-[#6b21a8]' : 'text-gray-800'}`}>
+                                                  {option.label}
+                                                </div>
+                                                <div className={`mt-0.5 text-[11px] ${isSelected ? 'text-[#8b5cf6]' : 'text-gray-500'}`}>
+                                                  {option.detail}
+                                                </div>
+                                                <div className={`mt-1 text-[11px] leading-4 ${isSelected ? 'text-[#7e22ce]' : 'text-gray-500'}`}>
+                                                  {option.description}
+                                                </div>
+                                              </div>
+                                              <div className={`mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-[#8b5cf6] bg-[#8b5cf6] text-white' : 'border-gray-300 bg-white text-transparent'}`}>
+                                                <Check size={12} strokeWidth={3} />
+                                              </div>
+                                            </div>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                                {isIndustryReport && (
+                                  <div>
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="w-5 h-5 rounded-full bg-[#f3e8ff] text-[#7e22ce] text-[11px] font-semibold flex items-center justify-center">2</span>
+                                      <label className="text-xs font-medium text-gray-700">Estimated output</label>
+                                    </div>
+                                    <div className="rounded-xl border border-[#e9d5ff] bg-[#faf7ff] px-4 py-3">
+                                      <div className="text-[13px] font-semibold text-[#6b21a8]">Industry Report</div>
+                                      <div className="mt-1 text-[12px] text-[#7e22ce]">10+ pages</div>
+                                      <div className="mt-2 text-[12px] leading-5 text-gray-500">
+                                        Web and industry sources, about 15 minutes.
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="mt-3 rounded-xl bg-gray-50 px-3 py-2 text-[11px] text-gray-500">
+                                {selectedReportType
+                                  ? isAcademicSurvey
+                                    ? `Selected: ${selectedReportType.label} / ${selectedReportLength?.label ?? 'Choose length'}`
+                                    : 'Selected: Industry Report / 10+ pages / around 15 minutes'
+                                  : 'Choose a report type to continue.'}
                               </div>
                             </div>
                           )}
                         </div>
+                        <button className="flex items-center gap-1.5 hover:text-gray-900 transition-colors">
+                          <Paperclip size={14} className="text-gray-400" /> Add reference files
+                        </button>
                       </div>
-                      <button className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#dbeafe] to-[#e9d5ff] flex items-center justify-center hover:opacity-90 transition-opacity shadow-sm flex-shrink-0 ml-4">
-                        <ArrowUp size={18} className="text-white" strokeWidth={2} />
+                      <button
+                        onClick={handleSurveySubmit}
+                        disabled={!canAttemptSurvey}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-sm flex-shrink-0 ml-4 ${
+                          canAttemptSurvey
+                            ? 'bg-gradient-to-tr from-[#dbeafe] to-[#e9d5ff] hover:opacity-90'
+                            : 'bg-gray-100 cursor-not-allowed opacity-70'
+                        }`}
+                        title={surveySubmitHint}
+                      >
+                        <ArrowUp size={18} className={canAttemptSurvey ? 'text-white' : 'text-gray-400'} strokeWidth={2} />
                       </button>
                     </div>
                   </>
@@ -1067,7 +1156,7 @@ export default function App() {
               {/* Quick Actions */}
               <div className="mt-6 flex items-center justify-center max-w-[800px] w-full">
                 <div className="flex items-center p-1.5 rounded-full bg-white/60 backdrop-blur-md shadow-sm border border-white/40">
-                  {['Paper search', 'Idea brainstorming', 'Data analysis', 'Literature survey', 'Manuscript drafting'].map((action) => (
+                  {['Paper search', 'Idea brainstorming', 'Data analysis', 'Research Reports', 'Manuscript drafting'].map((action) => (
                     <button 
                       key={action} 
                       onClick={() => setSelectedAction(action)}
@@ -1107,6 +1196,122 @@ export default function App() {
                   </div>
                 </div>
               </div>
+
+              {isReportSettingsModalOpen && (
+                <div
+                  className="fixed inset-0 z-50 bg-[rgba(17,24,39,0.18)] backdrop-blur-[2px] flex items-center justify-center px-4"
+                  onClick={handleCloseReportSettingsModal}
+                >
+                  <div
+                    className="w-full max-w-[620px] rounded-[28px] bg-white p-7 shadow-[0_24px_60px_rgba(15,23,42,0.18)] border border-white/70"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-[18px] font-semibold text-[#2a2136]">Choose report settings</h3>
+                        <p className="mt-3 text-[15px] leading-6 text-[#6b7280]">
+                          Select the report type and length before generating your content.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleCloseReportSettingsModal}
+                        className="text-[#9ca3af] hover:text-[#6b7280] transition-colors"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="mt-8 space-y-6">
+                      <div>
+                        <div className="mb-3 text-[13px] font-medium text-[#4b5563]">Report type</div>
+                        <div className="space-y-3">
+                          {reportTypeOptions.map((option) => {
+                            const isSelected = reportType === option.value;
+                            return (
+                              <button
+                                key={option.value}
+                                onClick={() => handleReportTypeSelect(option.value)}
+                                className={`w-full rounded-2xl border px-5 py-4 text-left transition-all ${
+                                  isSelected
+                                    ? 'border-[#8b5cf6] bg-[#f5f3ff] shadow-[0_4px_12px_rgba(139,92,246,0.10)]'
+                                    : 'border-[#e5e7eb] bg-white hover:border-[#d8b4fe] hover:bg-[#faf7ff]'
+                                }`}
+                              >
+                                <div className="flex items-center gap-4">
+                                  <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${isSelected ? 'border-[#8b5cf6]' : 'border-[#d1d5db]'}`}>
+                                    <div className={`w-2.5 h-2.5 rounded-full ${isSelected ? 'bg-[#8b5cf6]' : 'bg-transparent'}`}></div>
+                                  </div>
+                                  <div>
+                                    <div className="text-[16px] font-semibold text-[#2f2854]">{option.label}</div>
+                                    <div className="mt-1 text-[13px] text-[#6b7280]">{option.description}</div>
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {isAcademicSurvey && (
+                        <div>
+                          <div className="mb-3 text-[13px] font-medium text-[#4b5563]">Survey depth</div>
+                          <div className="grid grid-cols-2 gap-3">
+                            {reportLengthOptions.map((option) => {
+                              const isSelected = reportLength === option.value;
+                              return (
+                                <button
+                                  key={option.value}
+                                  onClick={() => setReportLength(option.value)}
+                                  className={`rounded-2xl border px-4 py-4 text-left transition-all ${
+                                    isSelected
+                                      ? 'border-[#8b5cf6] bg-[#f5f3ff] shadow-[0_4px_12px_rgba(139,92,246,0.10)]'
+                                      : 'border-[#e5e7eb] bg-white hover:border-[#d8b4fe] hover:bg-[#faf7ff]'
+                                  }`}
+                                >
+                                  <div className="text-[15px] font-semibold text-[#2f2854]">{option.label}</div>
+                                  <div className="mt-1 text-[12px] text-[#8b5cf6]">{option.detail}</div>
+                                  <div className="mt-2 text-[12px] leading-5 text-[#6b7280]">{option.description}</div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      {isIndustryReport && (
+                        <div>
+                          <div className="mb-3 text-[13px] font-medium text-[#4b5563]">Estimated output</div>
+                          <div className="rounded-2xl border border-[#e9d5ff] bg-[#faf7ff] px-5 py-4">
+                            <div className="text-[16px] font-semibold text-[#2f2854]">10+ page industry report</div>
+                            <div className="mt-2 text-[13px] leading-6 text-[#6b7280]">
+                              Web and industry sources, about 15 minutes.
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-8 grid grid-cols-2 gap-4">
+                      <button
+                        onClick={handleCloseReportSettingsModal}
+                        className="h-[58px] rounded-2xl border border-[#e5e7eb] bg-[#f3f4f6] text-[16px] font-semibold text-[#374151] hover:bg-[#eceff3] transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleConfirmReportSettings}
+                        disabled={!isReportSettingsComplete}
+                        className={`h-[58px] rounded-2xl text-[16px] font-semibold transition-all ${
+                          isReportSettingsComplete
+                            ? 'bg-[#ede9fe] text-[#111827] hover:bg-[#e4ddfd]'
+                            : 'bg-[#f3f4f6] text-[#9ca3af] cursor-not-allowed'
+                        }`}
+                      >
+                        Confirm
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="w-full max-w-[1200px] mx-auto">
