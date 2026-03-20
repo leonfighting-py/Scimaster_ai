@@ -9,3 +9,54 @@ body {
   font-family: var(--font-sans);
   color: #2f223c;
 }
+
+/* ── IdeaBrainstorming stitch page ── */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+.node-card {
+  width: 220px;
+  transition: all 0.2s ease-in-out;
+}
+
+.node-active {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+  border-color: #3b82f6 !important;
+}
+
+.connection-line {
+  fill: none;
+  stroke: #cbd5e1;
+  stroke-width: 2;
+  stroke-dasharray: 4;
+}
+
+.chat-bubble-user {
+  background-color: #3b82f6;
+  color: white;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.chat-bubble-ai {
+  background-color: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px 18px 18px 4px;
+}
+
+.sidebar-shadow {
+  box-shadow: -4px 0 15px rgba(0, 0, 0, 0.03);
+}
