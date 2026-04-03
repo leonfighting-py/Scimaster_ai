@@ -490,7 +490,7 @@ export default function OutlineWorkspace({
   const chatEndRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
   const [files, setFiles] = useState<OutlineFileItem[]>(MOCK_FILES);
-  const [selectedFileId, setSelectedFileId] = useState<string | null>(MOCK_FILES[0]?.id ?? null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   const [filePreviewTop, setFilePreviewTop] = useState<number>(96);
   const [fileError, setFileError] = useState<string>('');
 
@@ -871,20 +871,29 @@ export default function OutlineWorkspace({
           <span className="text-[13px] font-semibold text-slate-900 tracking-[-0.01em]">SciMaster</span>
         </button>
 
-        <div className="flex items-center justify-center gap-8 flex-1">
+        <div className="flex items-center justify-center gap-6 flex-1">
+          {/* Step 1: Ideamap — completed, click to go back */}
+          <button
+            onClick={onBack}
+            className="flex items-center gap-[9px] cursor-pointer hover:opacity-75 transition-opacity"
+          >
+            <div className="w-6 h-6 rounded-full bg-[#7c3aed] text-white text-[12px] font-medium flex items-center justify-center opacity-60 select-none">✓</div>
+            <span className="text-sm text-slate-400 font-normal">Ideamap</span>
+          </button>
+          <div className="w-8 h-px bg-slate-200" />
+          {/* Step 2: Outline — active */}
           <div className="flex items-center gap-[9px]">
-            <div className="w-6 h-6 rounded-full bg-[#7c3aed] text-white text-[12px] font-medium flex items-center justify-center">1</div>
-            <span className="text-sm text-[#7c3aed] font-normal">Brainstoming</span>
+            <div className="w-6 h-6 rounded-full bg-[#7c3aed] text-white text-[12px] font-medium flex items-center justify-center select-none">2</div>
+            <span className="text-sm text-[#7c3aed] font-medium">Outline</span>
           </div>
           <div className="w-8 h-px bg-slate-200" />
+          {/* Step 3: Writing — unlocked after outline generated */}
           <button
             onClick={writerEnabled ? onGoToWriter : undefined}
             disabled={!writerEnabled}
-            className={`flex items-center gap-[9px] ${writerEnabled ? 'cursor-pointer' : 'cursor-not-allowed'} ${
-              writerEnabled ? 'opacity-50 hover:opacity-80 transition-opacity' : 'opacity-50'
-            }`}
+            className={`flex items-center gap-[9px] ${writerEnabled ? 'cursor-pointer hover:opacity-75 transition-opacity' : 'cursor-not-allowed'} opacity-50`}
           >
-            <div className="w-6 h-6 rounded-full border border-slate-300 text-slate-900 text-[12px] font-medium flex items-center justify-center bg-white">2</div>
+            <div className="w-6 h-6 rounded-full border border-slate-300 text-slate-900 text-[12px] font-medium flex items-center justify-center bg-white select-none">3</div>
             <span className="text-sm text-slate-900 font-medium">Writing</span>
           </button>
         </div>

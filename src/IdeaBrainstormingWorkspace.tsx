@@ -1,4 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  doLandscapeSurvey,
+  streamTopics,
+  scoreTopics,
+  type GeneratedTopic,
+  type ScoredTopic,
+} from './utils/llmClient';
 import ReactDOM from 'react-dom';
 import {
   ChevronDown,
@@ -11,7 +18,9 @@ import {
   PanelRightOpen,
   Plus,
   Settings,
+  Share2,
   Trash2,
+  UserPlus,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -44,6 +53,22 @@ type NodeData = {
 
 type LayoutPos = { x: number; y: number };
 type Message = { role: 'user' | 'ai'; text: string };
+
+// ── Adversarial generation types ──
+type AdversarialPhase =
+  | 'idle'
+  | 'surveying'
+  | 'generating'
+  | 'awaiting_confirm'
+  | 'scoring'
+  | 'done';
+
+type CandidateStatus =
+  | 'candidate'
+  | 'kept'
+  | 'eliminated'
+  | 'overridden-keep'
+  | 'overridden-eliminate';
 
 // ── Constants ──
 const MIN_SCALE = 0.2;
@@ -152,6 +177,10 @@ type NodeCardProps = {
   onSendToChat: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   memoryContent: string;
+  // Adversarial fields (optional — only present during generation flow)
+  candidateStatus?: CandidateStatus;
+  candidateScore?: ScoredTopic;
+  onToggleCandidateStatus?: () => void;
 };
 
 function NodeCard({
@@ -178,6 +207,9 @@ function NodeCard({
   onSendToChat,
   onContextMenu,
   memoryContent,
+  candidateStatus,
+  candidateScore,
+  onToggleCandidateStatus,
 }: NodeCardProps) {
   const [editTitle, setEditTitle] = useState(node.title);
   const [editBody, setEditBody] = useState(node.body);
@@ -196,11 +228,28 @@ function NodeCard({
   const isRootNode = !!node.isRoot;
   const hasChildren = node.children.length > 0;
 
+  // Candidate state CSS class (overrides selection border when in adversarial flow)
+  const candidateClass = candidateStatus === 'candidate'
+    ? 'node-candidate-state node-entering-candidate'
+    : candidateStatus === 'kept'
+    ? 'node-kept-state'
+    : candidateStatus === 'eliminated'
+    ? 'node-eliminated-state'
+    : candidateStatus === 'overridden-keep'
+    ? 'node-overridden-keep-state'
+    : candidateStatus === 'overridden-eliminate'
+    ? 'node-overridden-eliminate-state'
+    : '';
+
+  const isEliminated = candidateStatus === 'eliminated' || candidateStatus === 'overridden-eliminate';
+
   return (
     <div
       ref={cardRef}
       className={`absolute node-card group rounded-xl shadow-sm bg-white ${
-        isSelected
+        candidateStatus
+          ? `border ${candidateClass}`
+          : isSelected
           ? 'border-2 border-blue-500 shadow-blue-100'
           : 'border border-slate-200 hover:border-blue-300 hover:shadow-md'
       } ${isDraggingThis ? 'shadow-xl opacity-95 cursor-grabbing' : 'cursor-grab'} ${isRootNode ? 'p-5' : 'p-4'}`}
@@ -210,6 +259,7 @@ function NodeCard({
         width: NODE_W,
         zIndex: isDraggingThis ? 100 : isEditing ? 50 : isSelected ? 10 : 1,
         userSelect: 'none',
+        transition: 'opacity 0.4s ease, border-color 0.3s ease, box-shadow 0.3s ease',
       }}
       onMouseDown={(e) => { if (!isEditing) { e.stopPropagation(); onCardMouseDown(e); } }}
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
@@ -277,9 +327,59 @@ function NodeCard({
             </>
           ) : (
             <>
-              <h3 className={`font-semibold text-slate-900 text-sm leading-snug ${(isRootNode || hasChildren) ? 'pr-5' : ''} mb-3 flex-1`}>
+              {/* Verdict badge (top-left, only when scored) */}
+              {candidateScore && (
+                <div className={`absolute top-2 left-2 text-[9px] font-bold px-1.5 py-0.5 rounded-full score-badge-enter ${
+                  candidateScore.verdict === 'KEEP'
+                    ? 'bg-green-100 text-green-700'
+                    : candidateScore.verdict === 'ELIMINATE'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-yellow-100 text-yellow-700'
+                }`}>
+                  {candidateScore.verdict === 'KEEP' ? '✓ KEPT'
+                    : candidateScore.verdict === 'ELIMINATE' ? '✗ ELIM'
+                    : '~ BORDER'}
+                </div>
+              )}
+
+              <h3 className={`font-semibold text-slate-900 text-sm leading-snug ${
+                (isRootNode || hasChildren || candidateScore) ? 'pr-5' : ''
+              } ${candidateScore ? 'pt-4' : ''} mb-1 flex-1 ${
+                isEliminated ? (candidateStatus === 'overridden-eliminate' ? 'title-with-strikethrough title-overridden-eliminate' : 'title-with-strikethrough') : ''
+              }`}>
                 {node.title}
               </h3>
+
+              {/* Score bars + objection (visible after Critic phase) */}
+              {candidateScore && (
+                <div className="mb-2 score-badge-enter">
+                  <div className="flex flex-col gap-0.5 mb-1.5">
+                    {([
+                      { label: 'N', value: candidateScore.novelty, color: '#6366f1' },
+                      { label: 'F', value: candidateScore.feasibility, color: '#8b5cf6' },
+                      { label: 'I', value: candidateScore.impact, color: '#a855f7' },
+                    ] as const).map(({ label, value, color }) => (
+                      <div key={label} className="flex items-center gap-1">
+                        <span className="text-[9px] text-slate-400 font-medium w-3 flex-shrink-0">{label}</span>
+                        <div className="flex-1 h-1 bg-slate-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${value * 10}%`,
+                              backgroundColor: color,
+                              transition: 'width 0.8s cubic-bezier(0.4, 0, 0.2, 1)',
+                            }}
+                          />
+                        </div>
+                        <span className="text-[9px] text-slate-400 w-4 text-right flex-shrink-0">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-slate-400 italic leading-snug line-clamp-2">
+                    "{candidateScore.strongest_objection}"
+                  </p>
+                </div>
+              )}
 
               {/* ── Bottom bar — conditional on project state ── */}
               {isProjectNode ? (
@@ -329,6 +429,22 @@ function NodeCard({
                     </button>
                   </div>
                 ) : null
+              ) : candidateStatus && onToggleCandidateStatus ? (
+                // Adversarial mode footer: toggle button
+                <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-center">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onToggleCandidateStatus(); }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className={`text-[10px] font-medium px-3 py-1 rounded-full transition-colors ${
+                      isEliminated
+                        ? 'bg-orange-50 text-orange-600 hover:bg-orange-100 border border-orange-200'
+                        : 'bg-slate-100 text-slate-500 hover:bg-red-50 hover:text-red-500 border border-slate-200'
+                    }`}
+                    title={isEliminated ? '点击复活此选题' : '点击淘汰此选题'}
+                  >
+                    {isEliminated ? '↩ 复活' : '✕ 淘汰'}
+                  </button>
+                </div>
               ) : (
                 // No project yet: show chat icon + new project "+"
                 <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
@@ -413,6 +529,16 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
   // ── Panel state ──
   const [showFiles, setShowFiles] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+
+  // ── Adversarial generation state ──
+  const [adversarialPhase, setAdversarialPhase] = useState<AdversarialPhase>('idle');
+  const [candidateStatuses, setCandidateStatuses] = useState<Record<string, CandidateStatus>>({});
+  const [candidateScores, setCandidateScores] = useState<Record<string, ScoredTopic>>({});
+  const [surveyStatusText, setSurveyStatusText] = useState('');
+  // Tracks topics generated in this session for the Critic call
+  const generatedTopicsRef = useRef<GeneratedTopic[]>([]);
+  // Track how many candidates generated so far (for status display)
+  const [generatedCount, setGeneratedCount] = useState(0);
 
   // ── Session memory (mock AI-generated) ──
   const [sessionMemory] = useState<string>(
@@ -653,6 +779,165 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
     setEditingNodeId(newId);
   };
 
+  // ── Adversarial generation handlers ──────────────────────────────────────
+
+  const startAdversarialGeneration = useCallback(async () => {
+    if (!query.trim()) return;
+
+    // Reset canvas: only the root node (titled after the query)
+    generatedTopicsRef.current = [];
+    setGeneratedCount(0);
+    setCandidateStatuses({});
+    setCandidateScores({});
+    setNodeMap({
+      root: {
+        id: 'root',
+        label: 'Query',
+        title: query,
+        body: '',
+        children: [],
+        parentId: null,
+        isRoot: true,
+      },
+    });
+
+    // Phase 1: landscape survey
+    setAdversarialPhase('surveying');
+    setSurveyStatusText('正在研究领域背景...');
+
+    let landscape = '';
+    try {
+      landscape = await doLandscapeSurvey(query);
+    } catch (err) {
+      console.error('Landscape survey failed:', err);
+      setSurveyStatusText('');
+      setAdversarialPhase('idle');
+      return;
+    }
+
+    // Phase 2: stream topic generation
+    setAdversarialPhase('generating');
+    setSurveyStatusText('');
+
+    try {
+      await streamTopics(
+        query,
+        landscape,
+        (topic) => {
+          generatedTopicsRef.current = [...generatedTopicsRef.current, topic];
+          setGeneratedCount((c) => c + 1);
+
+          setNodeMap((prev) => {
+            const rootNode = prev.root;
+            return {
+              ...prev,
+              root: { ...rootNode, children: [...rootNode.children, topic.id] },
+              [topic.id]: {
+                id: topic.id,
+                label: topic.angle,
+                title: topic.title,
+                body: topic.oneLiner,
+                children: [],
+                parentId: 'root',
+              },
+            };
+          });
+          setCandidateStatuses((prev) => ({ ...prev, [topic.id]: 'candidate' }));
+        },
+        () => {
+          setAdversarialPhase('awaiting_confirm');
+        },
+      );
+    } catch (err) {
+      console.error('Topic streaming failed:', err);
+      setAdversarialPhase('idle');
+    }
+  }, [query]);
+
+  const startScoring = useCallback(async () => {
+    const topics = generatedTopicsRef.current;
+    if (topics.length === 0) return;
+
+    setAdversarialPhase('scoring');
+
+    try {
+      const scores = await scoreTopics(query, topics);
+
+      const newStatuses: Record<string, CandidateStatus> = {};
+      const newScores: Record<string, ScoredTopic> = {};
+
+      for (const score of scores) {
+        newScores[score.id] = score;
+        newStatuses[score.id] =
+          score.verdict === 'KEEP'
+            ? 'kept'
+            : score.verdict === 'ELIMINATE'
+            ? 'eliminated'
+            : 'candidate'; // BORDERLINE stays as candidate (user decides)
+      }
+
+      // Any topics not returned by Critic default to candidate
+      topics.forEach((t) => {
+        if (!newStatuses[t.id]) newStatuses[t.id] = 'candidate';
+      });
+
+      setCandidateScores(newScores);
+      setCandidateStatuses(newStatuses);
+      setAdversarialPhase('done');
+    } catch (err) {
+      console.error('Scoring failed:', err);
+      setAdversarialPhase('awaiting_confirm'); // go back to confirm banner
+    }
+  }, [query]);
+
+  const handleToggleCandidateStatus = useCallback((nodeId: string) => {
+    setCandidateStatuses((prev) => {
+      const current = prev[nodeId] ?? 'candidate';
+      const isCurrentlyEliminated =
+        current === 'eliminated' || current === 'overridden-eliminate';
+      return {
+        ...prev,
+        [nodeId]: isCurrentlyEliminated ? 'overridden-keep' : 'overridden-eliminate',
+      };
+    });
+  }, []);
+
+  const confirmTopics = useCallback(() => {
+    // Delete all eliminated nodes from the tree
+    const toDelete = Object.entries(candidateStatuses)
+      .filter(([, s]) => s === 'eliminated' || s === 'overridden-eliminate')
+      .map(([id]) => id);
+
+    setNodeMap((prev) => {
+      const next = { ...prev };
+      for (const nodeId of toDelete) {
+        if (!next[nodeId]) continue;
+        const parentId = next[nodeId].parentId;
+        if (parentId && next[parentId]) {
+          next[parentId] = {
+            ...next[parentId],
+            children: next[parentId].children.filter((c) => c !== nodeId),
+          };
+        }
+        delete next[nodeId];
+      }
+      return next;
+    });
+
+    // Clear adversarial state
+    setCandidateStatuses({});
+    setCandidateScores({});
+    setAdversarialPhase('idle');
+  }, [candidateStatuses]);
+
+  // ── Auto-trigger on mount when no initialProject ──────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!initialProject && query.trim()) {
+      startAdversarialGeneration();
+    }
+  }, []); // intentionally run only on mount
+
   const handleToggleCollapse = (id: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
@@ -790,7 +1075,7 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
 
   // ── Compute visible connections ──
   const connections: { path: string; key: string }[] = [];
-  Object.values(nodeMap).forEach((node) => {
+  (Object.values(nodeMap) as NodeData[]).forEach((node) => {
     if (!visibleNodeIds.has(node.id) || collapsed.has(node.id)) return;
     node.children.forEach((childId) => {
       const pPos = customPositions[node.id] ?? positions[node.id];
@@ -837,7 +1122,7 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
   }
 
   return (
-    <div className="h-screen flex" style={{ fontFamily: "'Inter', sans-serif", overflow: 'hidden' }}>
+    <div className="h-screen flex flex-col" style={{ fontFamily: "'Inter', sans-serif", overflow: 'hidden' }}>
 
       {/* ── Fixed full-screen background (lowest z-layer, never moves) ── */}
       <div
@@ -853,41 +1138,85 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
         }}
       />
 
-      {/* ── Narrow Sidebar ── */}
-      <div className="w-[50px] h-full bg-[#fcfcfd] border-r border-gray-100 flex flex-col items-center py-4 z-30 flex-shrink-0">
-        <button onClick={onBack} className="mb-6 hover:opacity-80 transition-opacity" aria-label="Go home">
+      {/* ── Header ── */}
+      <header className="h-14 shrink-0 bg-white/96 backdrop-blur-md border-b border-slate-200 z-40 flex items-center justify-between px-4">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 min-w-[180px] text-left"
+          aria-label="Back to Home"
+        >
           <LogoSmall />
+          <span className="text-[13px] font-semibold text-slate-900 tracking-[-0.01em]">SciMaster</span>
         </button>
 
-        <div className="flex flex-col gap-4 w-full items-center">
+        <div className="flex items-center justify-center gap-6 flex-1">
+          <div className="flex items-center gap-[9px]">
+            <div className="w-6 h-6 rounded-full bg-[#7c3aed] text-white text-[12px] font-medium flex items-center justify-center select-none">1</div>
+            <span className="text-sm text-[#7c3aed] font-medium">Ideamap</span>
+          </div>
+          <div className="w-8 h-px bg-slate-200" />
           <button
-            onClick={() => setShowFiles((v) => !v)}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${showFiles ? 'bg-[#f3e8ff] text-[#7e22ce]' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'}`}
-            aria-label="Toggle Files"
+            onClick={sessionProject ? () => setActiveView('outline') : undefined}
+            disabled={!sessionProject}
+            className={`flex items-center gap-[9px] transition-opacity ${sessionProject ? 'cursor-pointer hover:opacity-75' : 'cursor-not-allowed opacity-40'}`}
           >
-            <Folder size={18} />
+            <div className={`w-6 h-6 rounded-full border flex items-center justify-center text-[12px] font-medium select-none ${sessionProject ? 'border-slate-300 text-slate-700 bg-white' : 'border-slate-200 text-slate-400 bg-white'}`}>2</div>
+            <span className={`text-sm font-medium ${sessionProject ? 'text-slate-700' : 'text-slate-400'}`}>Outline</span>
           </button>
+          <div className="w-8 h-px bg-slate-200" />
           <button
-            disabled
-            className="w-8 h-8 rounded-lg flex items-center justify-center opacity-35 cursor-not-allowed text-gray-400"
-            title="Idea Map (not available)"
+            onClick={writerEnabled && sessionProject ? () => setActiveView('project') : undefined}
+            disabled={!writerEnabled || !sessionProject}
+            className={`flex items-center gap-[9px] transition-opacity ${writerEnabled && sessionProject ? 'cursor-pointer hover:opacity-75' : 'cursor-not-allowed opacity-40'}`}
           >
-            <Map size={18} />
+            <div className="w-6 h-6 rounded-full border border-slate-200 text-slate-400 flex items-center justify-center text-[12px] font-medium bg-white select-none">3</div>
+            <span className="text-sm text-slate-400 font-medium">Writing</span>
+          </button>
+        </div>
+
+        <div className="min-w-[180px] flex items-center justify-end gap-3">
+          <button className="h-[34px] px-[13px] rounded-lg border border-slate-200 bg-white text-slate-900 text-sm font-medium flex items-center gap-2 shadow-sm hover:bg-slate-50 transition-colors">
+            <UserPlus size={13} />
+            Invite
+          </button>
+          <button className="h-8 px-4 rounded-lg bg-[#7c3aed] text-white text-sm font-medium flex items-center gap-2 shadow-[0px_1px_2px_0px_rgba(199,210,254,1)] hover:bg-[#6d28d9] transition-colors">
+            <Share2 size={12} />
+            Share
+          </button>
+        </div>
+      </header>
+
+      <div className="flex flex-1 min-h-0">
+
+      {/* ── Narrow Sidebar ── */}
+      <div className="w-[56px] h-full bg-white/82 backdrop-blur-md border-r border-slate-200 z-30 flex-shrink-0 flex flex-col items-center py-4">
+        <button
+          onClick={() => setShowFiles((v) => !v)}
+          className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showFiles ? 'bg-[#f5f3ff] text-[#7c3aed] border border-[#ede9fe]' : 'bg-white text-slate-500 border border-slate-200 shadow-sm hover:bg-slate-50'}`}
+          title="Toggle Files"
+        >
+          <Folder size={15} />
+        </button>
+
+        <div className="mt-4 w-full flex justify-center">
+          <button
+            className="w-8 h-8 rounded-xl bg-white text-slate-700 border border-slate-200 flex items-center justify-center shadow-sm"
+            title="Idea canvas"
+          >
+            <Map size={15} />
           </button>
         </div>
 
         <div className="flex-1" />
 
-        <div className="flex flex-col gap-4 w-full items-center">
-          <button className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 flex items-center justify-center transition-colors">
-            <div className="w-4 h-4 rounded-full border-2 border-current flex items-center justify-center text-[10px] font-bold">!</div>
+        <div className="flex flex-col gap-4 items-center pb-1">
+          <button className="text-slate-400 hover:text-slate-600 transition-colors">
+            <div className="w-[18px] h-[18px] rounded-full border-2 border-current flex items-center justify-center text-[10px] font-bold">?</div>
           </button>
-          <button className="w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-50 flex items-center justify-center transition-colors">
+          <button className="text-slate-400 hover:text-slate-600 transition-colors">
             <Settings size={18} />
           </button>
-          <button className="w-8 h-8 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center text-xs font-medium">
-            L
-          </button>
+          <button className="w-8 h-8 rounded-full bg-slate-200" aria-label="Profile" />
         </div>
       </div>
 
@@ -903,42 +1232,94 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
         onMouseLeave={handleMouseUp}
         onClick={handleCanvasClick}
       >
-        {/* ── Idea / Outline / Writer view toggle (top-left of canvas, always visible) ── */}
-        <div className="absolute top-4 left-4 z-30 flex items-center gap-1 bg-white rounded-xl border border-slate-200 shadow-sm p-1">
-          <button
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ede9fe] text-[#7c3aed] text-xs font-medium"
-            title="Current view: Idea"
-          >
-            <Map size={13} />
-            Idea
-          </button>
-          <button
-            onClick={sessionProject ? () => setActiveView('outline') : undefined}
-            disabled={!sessionProject}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              sessionProject
-                ? 'text-slate-400 hover:bg-slate-50 hover:text-slate-700 cursor-pointer'
-                : 'text-slate-300 opacity-40 cursor-not-allowed'
-            }`}
-            title={sessionProject ? 'Switch to Outline' : 'Create a project first'}
-          >
-            <Layers size={13} />
-            Outline
-          </button>
-          <button
-            onClick={writerEnabled && sessionProject ? () => setActiveView('project') : undefined}
-            disabled={!writerEnabled || !sessionProject}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              writerEnabled && sessionProject
-                ? 'text-slate-400 hover:bg-slate-50 hover:text-slate-700 cursor-pointer'
-                : 'text-slate-300 opacity-40 cursor-not-allowed'
-            }`}
-            title={writerEnabled ? 'Switch to Writer' : 'Generate full text in Outline first'}
-          >
-            <FileText size={13} />
-            Writer
-          </button>
-        </div>
+        {/* ── Adversarial phase overlays ── */}
+
+        {/* Surveying / generating status pill */}
+        {(adversarialPhase === 'surveying' || adversarialPhase === 'generating') && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-white/90 backdrop-blur-sm border border-indigo-200 rounded-full px-4 py-2 shadow-md">
+            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+            <span className="text-xs text-indigo-700 font-medium">
+              {adversarialPhase === 'surveying'
+                ? surveyStatusText || '正在研究领域背景...'
+                : `正在生成选题候选... (${generatedCount}/7)`}
+            </span>
+          </div>
+        )}
+
+        {/* Scoring status pill */}
+        {adversarialPhase === 'scoring' && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-white/90 backdrop-blur-sm border border-violet-200 rounded-full px-4 py-2 shadow-md">
+            <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+            <span className="text-xs text-violet-700 font-medium">⚔️ 对抗打分中，Critic 正在审查每个选题...</span>
+          </div>
+        )}
+
+        {/* ConfirmBanner: awaiting user to start scoring */}
+        {adversarialPhase === 'awaiting_confirm' && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 w-[480px] max-w-[90vw]">
+            <div className="bg-white/95 backdrop-blur-sm border border-indigo-200 rounded-2xl shadow-xl p-4 flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                  <span className="text-sm">⚔️</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800">
+                    已生成 {generatedTopicsRef.current.length} 个候选选题
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    确认后将启动对抗打分：Critic 会对每个选题给出分数与最强反对意见
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={startScoring}
+                className="flex-shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors shadow-sm"
+              >
+                <span>开始打分</span>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M13 5l7 7-7 7M5 12h15" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Confirm topics: done phase */}
+        {adversarialPhase === 'done' && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 w-[520px] max-w-[90vw]">
+            <div className="bg-white/95 backdrop-blur-sm border border-green-200 rounded-2xl shadow-xl p-4 flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-xl bg-green-50 flex items-center justify-center flex-shrink-0">
+                  <span className="text-sm">✅</span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-800">对抗打分完成</p>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                    点击节点底部按钮可手动复活或淘汰选题；确认后划除节点将被移除
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => startAdversarialGeneration()}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors"
+                  title="重新生成"
+                >
+                  ↩ 重来
+                </button>
+                <button
+                  onClick={confirmTopics}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors shadow-sm"
+                >
+                  确认选题
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Expand sidebar button */}
         {!showSidebar && (
@@ -1005,7 +1386,7 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
           </svg>
 
           {/* Node cards */}
-          {Object.values(nodeMap)
+          {(Object.values(nodeMap) as NodeData[])
             .filter((node) => visibleNodeIds.has(node.id))
             .map((node) => {
               const pos = customPositions[node.id] ?? positions[node.id];
@@ -1039,6 +1420,13 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
                   })}
                   onContextMenu={(e) => handleContextMenu(e, node.id)}
                   memoryContent={sessionMemory}
+                  candidateStatus={candidateStatuses[node.id]}
+                  candidateScore={candidateScores[node.id]}
+                  onToggleCandidateStatus={
+                    candidateStatuses[node.id]
+                      ? () => handleToggleCandidateStatus(node.id)
+                      : undefined
+                  }
                 />
               );
             })}
@@ -1047,18 +1435,16 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
 
       {/* ── Chat Sidebar ── */}
       {showSidebar && (
-        <aside className="w-[420px] h-full flex flex-col bg-white border-l border-slate-200 sidebar-shadow z-20">
+        <aside className="w-[420px] h-full flex flex-col bg-white border-l border-slate-200 z-20 flex-shrink-0">
           <header className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-            <p className="text-xs text-slate-400">Current Context: Bayesian Modeling</p>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setShowSidebar(false)}
-                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                title="Collapse"
-              >
-                <PanelRightClose size={15} />
-              </button>
-            </div>
+            <p className="text-xs text-slate-400 truncate max-w-[280px]">Context: {query}</p>
+            <button
+              onClick={() => setShowSidebar(false)}
+              className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              title="Collapse"
+            >
+              <PanelRightClose size={15} />
+            </button>
           </header>
 
           <section className="flex-grow overflow-y-auto p-6 space-y-6">
@@ -1105,52 +1491,45 @@ export default function IdeaBrainstormingWorkspace({ query, onBack, onIdeaMap, i
 
           {/* Drop zone for node cards */}
           <footer
-            className="p-6"
+            className="p-4 border-t border-slate-100"
             onDragOver={handleChatDragOver}
             onDrop={handleChatDrop}
           >
-            <div className="relative bg-slate-50 rounded-2xl border border-slate-200 shadow-sm p-3">
-              <div className="flex items-end gap-2">
-                <textarea
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  className="flex-grow bg-transparent border-none focus:ring-0 text-sm p-0 resize-none min-h-[40px] max-h-[120px] text-slate-700 placeholder:text-slate-400 outline-none"
-                  placeholder="Start with an idea, or drag a node here..."
-                />
-                <div className="flex items-center gap-1.5 mb-1 flex-shrink-0">
-                  {/* Attachment upload */}
-                  <label className="cursor-pointer text-slate-400 hover:text-blue-500 transition-colors" title="上传附件">
-                    <input type="file" multiple className="hidden" accept=".pdf,.doc,.docx,.txt,.md" />
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                    </svg>
-                  </label>
-                  {/* Mic */}
-                  <button className="text-slate-400 hover:text-slate-600 transition-colors">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                    </svg>
-                  </button>
-                  {/* Send */}
-                  <button
-                    onClick={() => {
-                      if (!chatInput.trim()) return;
-                      setMessages((prev) => [...prev, { role: 'user', text: chatInput }]);
-                      setChatInput('');
-                    }}
-                    className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white shadow-md hover:bg-blue-700 transition-colors"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
+            <div className="flex items-end gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+              <textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                className="flex-1 bg-transparent text-sm text-slate-700 resize-none outline-none placeholder-slate-400 leading-relaxed max-h-24"
+                rows={1}
+                placeholder="Start with an idea, or drag a node here..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!chatInput.trim()) return;
+                    setMessages((prev) => [...prev, { role: 'user', text: chatInput }]);
+                    setChatInput('');
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  if (!chatInput.trim()) return;
+                  setMessages((prev) => [...prev, { role: 'user', text: chatInput }]);
+                  setChatInput('');
+                }}
+                disabled={!chatInput.trim()}
+                className="flex-shrink-0 w-7 h-7 rounded-lg bg-[#7c3aed] flex items-center justify-center text-white disabled:opacity-40 hover:bg-[#6d28d9] transition-colors mb-0.5"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path d="M5 12h14M12 5l7 7-7 7" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                </svg>
+              </button>
             </div>
           </footer>
         </aside>
       )}
 
+      </div>{/* end flex-1 content row */}
 
       {/* ── Replace Project confirmation modal ── */}
       {replaceConfirmNodeId && (

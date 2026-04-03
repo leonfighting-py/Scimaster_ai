@@ -314,31 +314,11 @@ export default function App() {
     currentPage === 'project_workspace' &&
     selectedAction === 'idea_brainstorming'
   ) {
-    /* IdeaMap temporarily hidden – code preserved below for future restoration
     return (
       <IdeaBrainstormingWorkspace
         query={researchPrompt || 'New Brainstorming Session'}
         onBack={() => { setCurrentPage('home'); setSelectedAction(null); }}
         onIdeaMap={() => setCurrentPage('idea_map')}
-      />
-    );
-    */
-    return (
-      <OutlineWorkspace
-        query={researchPrompt || 'New Brainstorming Session'}
-        writerEnabled={outlineWriterEnabled}
-        initialNodeMap={outlineNodeMap}
-        onBack={() => { setCurrentPage('home'); setSelectedAction(null); }}
-        onGoToWriter={() => {
-          setSelectedAction('deep_survey');
-          setCurrentPage('project_workspace');
-        }}
-        onGenerateFullText={(_type) => {
-          setOutlineWriterEnabled(true);
-          setSelectedAction('deep_survey');
-          setCurrentPage('project_workspace');
-        }}
-        onOutlineGenerated={(nm) => setOutlineNodeMap(nm)}
       />
     );
   }
